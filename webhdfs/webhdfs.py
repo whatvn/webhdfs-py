@@ -244,6 +244,81 @@ class WebHDFS(object):
             raise HdfsException(msg)
         return response
 
+DFS = WebHDFS('10.1.1.3', 50070, 'feiyuw')
+
+class HdfsFileWrapper(object):
+    def __init__(self, path_name, blksize=1024*1024*2):
+        self.is_string = False
+        self.offset = 0
+        self.blksize = blksize
+        self.path_name = path_name
+        self.length = DFS.getsize(self.path_name)
+        if self.length is not None and self.length <= self.blksize:
+            http_response = DFS.open(self.path_name, offset=0)
+            try:
+                # dump small zip to memory
+                self.fp = StringIO()
+                self.fp.write(http_response.read())
+                self.fp.seek(0)
+                self.is_string = True
+            finally:
+                http_response.close()
+        else:
+            self.fp = None
+            self.is_string = False
+                
+    def __getitem__(self, key):
+        data = self.read(self.blksize)
+        if data:
+            return data
+        raise IndexError
+
+    def __iter__(self):
+        return self
+
+    def seek(self, offset, whence=0):
+        self.offset = offset
+        if self.is_string:
+            self.fp.seek(offset, whence)
+        else:
+            if whence == 2:
+                if offset < 0:
+                    offset = -offset
+                self.offset = self.length - offset
+                
+    def next(self):
+        data = self.read(self.blksize)
+        if data:
+            return data
+        raise StopIteration
+    
+    def exits(self, path):
+        pass
+                
+    def read(self, size=None):
+        if self.is_string:
+            if size is None:
+                return self.fp.read()
+            return self.fp.read(size)
+        http_response = DFS.open(self.path_name, offset=self.offset, length=size)
+        try:
+            if size is None:
+                self.offset = self.length
+            else:
+                self.offset += size
+                if self.offset > self.length:
+                    self.offset = self.length
+            return http_response.read()
+        finally:
+            http_response.close()
+                
+    def tell(self):
+        return self.offset
+
+
+    def __getattr__(self, attr):
+        return getattr(self.fp, attr)
+
 
 
 if __name__ == '__main__':
