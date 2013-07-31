@@ -60,7 +60,7 @@ class WebHDFS(object):
             self.http_client.close()
      
      
-    def copyFromLocal(self, source_path, target_path):
+    def copyFromLocal(self, source_path, target_path, replication=1, buffersize=4096, append=False):
         url = '%s?op=CREATE&overwrite=true&user.name=%s' % (target_path, self.username)
         if isinstance(source_path, basestring):
             source_file = open(source_path, 'r')
@@ -75,35 +75,39 @@ class WebHDFS(object):
         finally:
             self.http_client.close()
         redirect_host, redirect_port, redirect_url = self._get_node_info(msg)
+        redirect_url = redirect_url + "&replication="+str(replication) + "&buffersize="+str(buffersize)
         logger.debug('Send redirect to: host: %s, port: %s, path: %s ' % (redirect_host, redirect_port, redirect_url))
         redirect_client = self._get_http_client(redirect_host, redirect_port)
-        try:
-            if hasattr(source_file, 'multiple_chunks') and source_file.multiple_chunks():
-                # large file from Django form uploaded
-                self._request(redirect_client, 'PUT', redirect_url, 201, '')
-                for chunk in source_file.chunks():
-                    self.appendToFile(target_path, chunk)
-            elif isinstance(source_file, file) and hasattr(source_file, 'seek') and callable(source_file.seek):
-                # local file
-                source_file.seek(TRUNK_SIZE)
-                if source_file.read(1) != '':
-                    source_file.seek(0)
-                    self._request(redirect_client, 'PUT', redirect_url, 201, '')
-                    while True:
-                        chunk = source_file.read(TRUNK_SIZE)
-                        if chunk == '':
-                            break
-                        self.appendToFile(target_path, chunk)
-                else:
-                    self._request(redirect_client, 'PUT', redirect_url, 201, source_file.read())
-            else:
-                self._request(redirect_client, 'PUT', redirect_url, 201, source_file.read())
-        finally:
-            if hasattr(source_file, 'close') and callable(source_file.close):
-                source_file.close()
-            redirect_client.close()
+        if not append: 
+			self._request(redirect_client, 'PUT', redirect_url, 201, source_file.read())
+        else:
+	        try:
+	            if hasattr(source_file, 'multiple_chunks') and source_file.multiple_chunks():
+	                # large file from Django form uploaded
+	                self._request(redirect_client, 'PUT', redirect_url, 201, '')
+	                for chunk in source_file.chunks():
+	                    self.appendToFile(target_path, chunk)
+	            elif isinstance(source_file, file) and hasattr(source_file, 'seek') and callable(source_file.seek):
+	                # local file
+	                source_file.seek(TRUNK_SIZE)
+	                if source_file.read(1) != '':
+	                    source_file.seek(0)
+	                    self._request(redirect_client, 'PUT', redirect_url, 201, '')
+	                    while True:
+	                        chunk = source_file.read(TRUNK_SIZE)
+	                        if chunk == '':
+	                            break
+	                        self.appendToFile(target_path, chunk)
+	                else:
+	                    self._request(redirect_client, 'PUT', redirect_url, 201, source_file.read())
+	            else:
+	                self._request(redirect_client, 'PUT', redirect_url, 201, source_file.read())
+	        finally:
+	            if hasattr(source_file, 'close') and callable(source_file.close):
+	                source_file.close()
+        redirect_client.close()
 
-    def appendToFile(self, path, data):
+    def appendToFile(self, path, data, buffersize=4096):
         url = '%s?op=APPEND&user.name=%s' % (path, self.username)
         logger.debug('Append data to HDFS file %s' % path)
         self._reset_namenode_client()
@@ -113,6 +117,7 @@ class WebHDFS(object):
         finally:
             self.http_client.close()
         redirect_host, redirect_port, redirect_url = self._get_node_info(msg)
+        redirect_url = redirect_url + '&buffersize='+str(buffersize) 
         logger.debug('Send redirect to: host: %s, port: %s, path: %s ' % (redirect_host, redirect_port, redirect_url))
         redirect_client = self._get_http_client(redirect_host, redirect_port)
         try:
@@ -121,7 +126,7 @@ class WebHDFS(object):
             redirect_client.close()
 
 
-    def copyToLocal(self, source_path, target_path):
+    def copyToLocal(self, source_path, target_path, buffersize=4096):
         url = '%s?op=OPEN&overwrite=true&user.name=%s' % (source_path, self.username)
         logger.debug('Copy %s to local %s' % (source_path, target_path))
         self._reset_namenode_client()
@@ -135,13 +140,14 @@ class WebHDFS(object):
         # no msg['location']
         if response_len != None:
             redirect_host, redirect_port, redirect_url = self._get_node_info(msg)
+            redirect_url = redirect_url + '&buffersize='+str(buffersize) 
             logger.debug('Send redirect to: host: %s, port: %s, path: %s ' % (redirect_host, redirect_port, redirect_url))
             redirect_client = self._get_http_client(redirect_host, redirect_port)
             try:
                 response = self._request(redirect_client, 'GET', redirect_url)
                 with open(target_path, 'w') as target_file:
                     while True:
-                        chunk = f.read(TRUNK_SIZE)
+                        chunk = reponse.read(TRUNK_SIZE)
                         if chunk == '':
                             break
                         target_file.write(chunk)
@@ -320,8 +326,7 @@ class HdfsFileWrapper(object):
         return getattr(self.fp, attr)
 
 
-
-if __name__ == '__main__':
+def main(): 
     dfs = WebHDFS('10.1.1.3', 50070, 'feiyuw')
     dfs.mkdir('/books/Erlang')
     dfs.copyFromLocal(r'/home/feiyuw/Programming Erlang.pdf', r'/books/Erlang/Programming_Erlang.pdf')
